@@ -1,0 +1,1 @@
+Feel free to add what you want.  Be respectful and make sure to add comments if your code might not be easily readable.  Keep it appropriate.  I appreciate jokes and fun, but please don't include inappropriate comment in your contributions.  This is public and people of all types, shapes, and sizes will see it.  
