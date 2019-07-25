@@ -6,7 +6,7 @@
 ####################################################################
 
 #Version 1
-gci $fileLocation -recurse | ?{$_.Mode -notlike "d*"} | measure-object -Property Length -Sum -Average | select $env:COMPUTERNAME,$(get-date).ToString(),count,sum,average
+gci "C:\Temp" -recurse | ?{$_.Mode -notlike "d*"} | measure-object -Property Length -Sum -Average | select $env:COMPUTERNAME,$(get-date).ToString(),count,sum,average
 
 #Version 2
 gci "C:\Temp" -recurse | ?{$_.Mode -notlike "d*"} | measure-object -Property Length -Sum -Average | %{"Computer Name: $env:COMPUTERNAME`r`nWhen run: $(get-date)`r`nNumber of Files: $($_.count)`r`nTotal Size of Files: $($_.sum) KB`r`nAverage File Size: $($_.average) KB"}
