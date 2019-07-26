@@ -20,7 +20,7 @@
 #      -bad directory
 #      -empty directory
 #      -unreachable host
-
+### Helper Functions
 function roundandconvert([double]$i)
 {
     <#
@@ -46,6 +46,68 @@ function roundandconvert([double]$i)
         default                            {return "$([Math]::Round($i/1TB,2)) TB";continue}
     }
 }
+function writeOutput()
+{
+    <#
+        .SYNOPSIS
+            Writes message with color to screen or returns error message.
+        .DESCRIPTION
+            Timestamp is appended to the beginning of every message. If error switch is not 
+            supplied, the message is written to the screen using write-host with the 
+            foreground color parameter set to Yellow unless a different color is specified.  
+            
+            If the error switch is specified, the timestamp is followed by '- [ERROR]' and 
+            the string is returned instead of using write-host.
+        .PARAMETER message
+            String value to be formatted.
+        .PARAMETER color
+            Default value is yellow.  Error given if invalid color is provided.
+        .PARAMETER error
+            Switch to add '[ERROR]' and return string instead of using write-host.
+    #>
+    [CmdletBinding(DefaultParameterSetName="color")]
+    param(
+        [parameter(Mandatory=$true,Position=0)]
+        [string]$message, 
+        [parameter(ParameterSetName="color")]
+        [parameter(Mandatory=$false,Position=1)]
+        [System.ConsoleColor]$color = [System.ConsoleColor]::Yellow,
+        [parameter(ParameterSetName="error")]
+        [parameter(Mandatory=$false)]
+        [switch]$error)
+    if($error)
+    {
+        return "$(get-date -format "[HH:mm:ss] - ")[ERROR] $message"
+    }
+    Write-Host "$(get-date -format "[HH:mm:ss] - ")$message" -ForegroundColor $color
+}
+function getFileInfo
+{
+    param([string[]]$fileLocationArray)
+    foreach ($fileLocation in $fileLocationArray)
+    {
+        if(Test-Path $_ -PathType Container) #test every path
+        {
+            #search location recursively for files (if mode starts with 'd' it's a directory).
+            $files = gci $_ -recurse | ?{$_.Mode -notlike "d*"}
+            if($files.count -le 0) #respond if no files found
+            {
+                writeOutput "No files found in $_." Red
+                continue
+            }
+            else
+            {
+                #return files when present
+                return $files 
+            }
+        }
+        else #respond to invalid paths with an error message, but don't stop the processing of other paths
+        {
+            writeOutput "File location is not valid.  Value provided: $_" Red
+        }
+    }
+}
+### Main Function
 function advGetFI()
 {
     <#
@@ -57,107 +119,74 @@ function advGetFI()
             Allows remote execution and multiple file locations. Can be ran as a job if desired. Default job names will be fileInformation_MM_dd_yyyy_HH_mm_ss_fff to prevent duplicate job name errors.
         .PARAMETER fileLocation
             Directory where file information will be gathered from.
-        .PARAMETER 
-        .EXAMPLE
-            PS> intGetFI "C:\Temp"
-
-            Path          : C:\Temp
-            Computer Name : LG6GYP72
-            WhenRun       : 7/23/2019 12:20:48 PM
-            Count         : 16
-            Sum           : 593620
-            Average       : 37101.25
-        .EXAMPLE
-            PS> "C:Temp" | intGetFI
-
-            Path          : C:\Temp
-            Computer Name : LG6GYP72
-            WhenRun       : 7/23/2019 12:20:48 PM
-            Count         : 16
-            Sum           : 593620
-            Average       : 37101.25
     #>
-
     param(
-        [parameter(ValueFromPipeline=$true)]
+        [parameter(ValueFromPipeline=$true,Position=0)]
         [ValidateNotNullOrEmpty()]
         [string[]]$fileLocationArray,
         [parameter(Position=0)]
-        [string]$remoteHost = "",
+        [string]$target = $env:COMPUTERNAME,
         [switch]$AsJob,
         [string]$jobName = "fileInvestigation_$(get-date -format "MM_dd_yyyy_HH_mm_ss_fff")"
     )
-    # CONNECTION CHECK
-    $target = $env:COMPUTERNAME
-    if([string]::IsNullOrEmpty($remoteHost))
+    Begin
     {
-        $target = $remoteHost
-        $cred = Get-Credential -Message "Provide credentials for connecting to $target"
+        if($target -ne $env:COMPUTERNAME)
+        {
+            $cred = Get-Credential -Message "Provide credentials for connecting to $target"
+        }
+        # CONNECTION CHECK
+        if(Test-Connection $target -count 1)
+        {
+            writeOutput "$target is reachable"
+        }
+        else
+        {
+            Throw (writeOutput "Unable to connect to $target")
+        }
     }
-    if(Test-Connection $target)
+    Process
     {
-        Write-Host "$(get-date -format "[HH:mm:ss] - ")$target is reachable" -ForegroundColor Yellow       
-    }
-    else
-    {
-        Throw "$(get-date -format "[HH:mm:ss] - ")[ERROR] Unable to connect to $target"
-    }
-    #Script block
-    $cmd = {
-            param($fileLocationArray)
-            foreach($fileLocation in $fileLocationArray)
+        if($AsJob)
+        {
+            if($target -eq $env:COMPUTERNAME)
             {
-                if(Test-Path $_ -PathType Container)
-                {
-                    if((gci $_ -recurse | ?{$_.Mode -notlike "d*"}).count -le 0)
-                    {
-                        Write-Host "No files found in $_." -ForegroundColor Red
-                        continue
-                    }
-                gci $fileLocation -recurse | ?{$_.Mode -notlike "d*"} | measure-object -Property Length -Sum -Average | select @{label="Path";Expression={$fileLocation}},`
-                                                                                                                                    @{label="ComputerName";Expression={$env:COMPUTERNAME}},`
-                                                                                                                                    @{label="WhenRun";Expression={$(get-date).ToString()}},`
-                                                                                                                                    @{label="NumberOfFiles";Expression={$_.count}},`
-                                                                                                                                    @{label="SizeOfFiles";Expression={roundandconvert $_.sum}},`
-                                                                                                                                    @{label="AverageFileSize";Expression={roundandconvert $_.average}}
-                }
-                else
-                {
-                    Write-Host "File location is not valid.  Value provided: $_" -ForegroundColor Red
-                    continue
-                }
-            }}
-    # JOB
-    if($AsJob)
-    {
-        if($target -eq $env:COMPUTERNAME)
-        {
-            Write-Host "$(get-date -format "[HH:mm:ss] - ")Starting job: $jobName" -ForegroundColor Yellow
-            Invoke-Command -ComputerName $target -ScriptBlock $sc -ArgumentList (,$fileLocationArray) -AsJob -JobName $jobName
-            Write-Host "$(get-date -format "[HH:mm:ss] - ")Waiting for job: $jobName..." -ForegroundColor Yellow
+                writeOutput "Starting job: $jobName"
+                Invoke-Command -ComputerName $target -ScriptBlock {getFileInfo $fileLocationArray} -ArgumentList (,$fileLocationArray) -AsJob -JobName $jobName
+                writeOutput "Waiting for job: $jobName..."
+            }
+            else
+            {
+                writeOutput "Starting job on $target with job name: $jobName"
+                Invoke-Command -ComputerName $target -ScriptBlock {getFileInfo $fileLocationArray} -ArgumentList (,$fileLocationArray) -AsJob -Credential $cred -JobName $jobName
+                writeOutput "Waiting for job: $jobName on $target..."
+            }
+            Get-Job -Name $jobName | Wait-Job
+            writeOutput "$jobName job completed."
+            $results = Receive-Job -Name $jobName
         }
         else
         {
-            Write-Host "$(get-date -format "[HH:mm:ss] - ")Starting job on $target with job name: $jobName" -ForegroundColor Yellow
-            Invoke-Command -ComputerName $target -ScriptBlock $sc -ArgumentList (,$fileLocationArray) -AsJob -Credential $cred -JobName $jobName
-            Write-Host "$(get-date -format "[HH:mm:ss] - ")Waiting for job: $jobName on $target..." -ForegroundColor Yellow
+            if($target -eq $env:COMPUTERNAME)
+            {
+                writeOutput "Gathering file information..."
+                $results = Invoke-Command -ComputerName $target -ScriptBlock {getFileInfo $fileLocationArray} -ArgumentList (,$fileLocationArray) 
+            }
+            else
+            {
+                writeOutput "Gathering file information on $target..."
+                $results = Invoke-Command -ComputerName $target -ScriptBlock {getFileInfo $fileLocationArray} -ArgumentList (,$fileLocationArray) -Credential $cred
+            }
         }
-        Get-Job -Name $jobName | Wait-Job
-        Write-Host "$(get-date -format "[HH:mm:ss] - ")$jobName job completed." -ForegroundColor Yellow
-        Receive-Job -Name $jobName
     }
-    else
+    End
     {
-        if($target -eq $env:COMPUTERNAME)
-        {
-            Write-Host "$(get-date -format "[HH:mm:ss] - ")Gathering file information..." -ForegroundColor Yellow
-            Invoke-Command -ComputerName $target -ScriptBlock $sc -ArgumentList (,$fileLocationArray) 
-        }
-        else
-        {
-            Write-Host "$(get-date -format "[HH:mm:ss] - ")Gathering file information on $target..." -ForegroundColor Yellow
-            Invoke-Command -ComputerName $target -ScriptBlock $sc -ArgumentList (,$fileLocationArray) -Credential $cred
-        }
+        #process results and write result to pipeline
+        $results | measure-object -Property Length -Sum -Average | select @{label="Path";Expression={$fileLocation}},`
+                                                                        @{label="ComputerName";Expression={$env:COMPUTERNAME}},` #not sure if this will return remotely without testing
+                                                                        @{label="WhenRun";Expression={$(get-date).ToString()}},`
+                                                                        @{label="NumberOfFiles";Expression={$_.count}},`
+                                                                        @{label="SizeOfFiles";Expression={roundandconvert $_.sum}},`
+                                                                        @{label="AverageFileSize";Expression={roundandconvert $_.average}}
     }
-    return 
-}
+    return $results
